@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="zh-Hant-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>HarmonyVoice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700;800&display=swap">
+<style>
+/* Layout: two panes. Left = the conversation stage (two avatars, push-to-talk, transcript). Right = the topic's argument tree that grows after each conversation. Stacks to one column on phones. */
+:root{
+  --bg:#FFF5F9; --surface:#FFFFFF; --sunk:#F7EFFA; --ink:#25215E; --ink-soft:#6B679B; --line:#EADFF2;
+  --edge:#25215E; --a:#F6A9C9; --b:#A3D9F4; --c:#CFC7F5; --leaf:#86CFA0; --peach:#FFC9A8; --warn:#F2B04A;
+  --bark:#9A7563; --bud:#FF8DB4; --vine:#8E7FD6; --belly:#FFFFFF; --scrim:rgba(255,245,249,.93);
+  --display:"Fredoka","PingFang HK","Noto Sans TC","Microsoft JhengHei",sans-serif;
+  --body:"Nunito","PingFang HK","Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#16142C; --surface:#211E40; --sunk:#1B1936; --ink:#F2EEFF; --ink-soft:#B1ABDB; --line:#35305E;
+  --edge:#0B0919; --a:#E48BB0; --b:#7FC3E6; --c:#A9A0E8; --leaf:#6EBE8C; --peach:#E9A988; --warn:#E8A33D;
+  --bark:#B8927F; --bud:#FF8DB4; --vine:#A99CF0; --belly:#F4EEFF; --scrim:rgba(22,20,44,.94); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#16142C; --surface:#211E40; --sunk:#1B1936; --ink:#F2EEFF; --ink-soft:#B1ABDB; --line:#35305E;
+  --edge:#0B0919; --a:#E48BB0; --b:#7FC3E6; --c:#A9A0E8; --leaf:#6EBE8C; --peach:#E9A988; --warn:#E8A33D;
+  --bark:#B8927F; --bud:#FF8DB4; --vine:#A99CF0; --belly:#F4EEFF; --scrim:rgba(22,20,44,.94); color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.55 var(--body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px 32px}
+button,select,input{font:inherit;color:inherit}
+h1,h2,h3,h4{margin:0;text-wrap:balance}
+p{margin:0}
+.eyebrow{font-size:12px;font-weight:800;letter-spacing:.06em;color:var(--ink-soft)}
+.note{color:var(--ink-soft);font-size:13.5px}
+.small{font-size:13px}
+
+.top{max-width:1240px;margin:0 auto 12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px}
+.brand svg{width:34px;height:34px}
+.name{font:600 22px/1 var(--display);letter-spacing:.01em}
+.tag{font-size:12px;font-weight:800;padding:2px 9px;border-radius:999px;background:var(--c);color:var(--edge)}
+.top-r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--sunk);border:1.5px solid var(--line)}
+.chip .dotc{width:8px;height:8px;border-radius:50%;background:var(--warn)}
+.chip.ok .dotc{background:var(--leaf)}
+.chip.off .dotc{background:var(--bud)}
+
+.grid{max-width:1240px;margin:0 auto;display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:980px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,1.08fr);align-items:start}}
+.card{background:var(--surface);border:2px solid var(--line);border-radius:22px;padding:18px;min-width:0;display:flex;flex-direction:column;gap:14px}
+
+.btn{border:2.5px solid var(--edge);border-radius:999px;padding:7px 16px;font-weight:800;cursor:pointer;background:var(--surface);color:var(--ink);box-shadow:0 3px 0 var(--edge);transition:transform .08s,box-shadow .08s}
+.btn:active{transform:translateY(2px);box-shadow:0 1px 0 var(--edge)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.pink{background:var(--a);color:var(--edge)}
+.btn.sky{background:var(--b);color:var(--edge)}
+.btn.small{padding:3px 11px;font-size:13px;box-shadow:0 2px 0 var(--edge);border-width:2px}
+.ghost{border:1.5px solid var(--line);background:transparent;border-radius:999px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:13px}
+:focus-visible{outline:3px solid var(--vine);outline-offset:2px}
+
+/* stage */
+.stage-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.stage-head h1{font:600 21px/1.3 var(--display)}
+.meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.timer{font:600 20px/1 var(--display);font-variant-numeric:tabular-nums;padding:5px 12px;border-radius:12px;background:var(--sunk)}
+.duo{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.person{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0;padding:10px;border-radius:18px;border:2px dashed transparent}
+.person.active{border-color:var(--line);background:var(--sunk)}
+.bubble{position:relative;flex:1;width:100%;min-height:76px;background:var(--surface);border:2px solid var(--line);border-radius:16px;padding:8px 11px;font-size:14px;display:flex;flex-direction:column;gap:3px}
+.bubble::after{content:"";position:absolute;bottom:-9px;left:50%;width:14px;height:14px;background:var(--surface);border-right:2px solid var(--line);border-bottom:2px solid var(--line);transform:translateX(-50%) rotate(45deg)}
+.bub-label{font-size:11.5px;font-weight:800;color:var(--ink-soft)}
+.bubble .hint{color:var(--ink-soft);margin:auto 0}
+.bubble.recording{border-color:transparent;background:transparent}
+.bubble.recording::after{display:none}
+.cloud{position:absolute;left:0;top:-6px;width:100%;height:calc(100% + 12px);overflow:visible}
+.cloud path,.cloud > circle{fill:#fff;stroke:#111;stroke-width:5;stroke-linejoin:round}
+.cdots circle{fill:#111}
+.cdots .d2{animation:d2 1.5s linear infinite}
+.cdots .d3{animation:d3 1.5s linear infinite}
+@keyframes d2{0%,33.3%{opacity:0}33.4%,100%{opacity:1}}
+@keyframes d3{0%,66.6%{opacity:0}66.7%,100%{opacity:1}}
+.bubble.playing{border-color:var(--vine)}
+.bubble.playing .bub-label::after{content:"　播緊…"}
+.replay{align-self:flex-start;padding:2px 10px;font-size:12px}
+.av{width:118px;max-width:100%}
+.controls{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center}
+.who-tag{font:600 14px/1 var(--display);width:26px;height:26px;border-radius:50%;display:grid;place-items:center;border:2px solid var(--edge);color:var(--edge)}
+#pA .who-tag{background:var(--a)} #pB .who-tag{background:var(--b)}
+select{border:1.5px solid var(--line);background:var(--surface);border-radius:10px;padding:4px 6px;font-size:13px;max-width:100%}
+.audience{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13.5px;padding:8px 12px;border-radius:14px;background:var(--sunk)}
+.audience label{font-weight:800}
+#audLine{color:var(--ink-soft);min-width:0;overflow-wrap:anywhere}
+.talk{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.seg{display:inline-flex;border:2px solid var(--line);border-radius:999px;padding:2px}
+.seg button{border:0;background:transparent;border-radius:999px;padding:4px 12px;font-weight:800;cursor:pointer;font-size:13.5px}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--surface)}
+.mic{flex:1 1 220px;display:flex;align-items:center;justify-content:center;gap:10px;font-size:16px;padding:12px 18px;touch-action:none;user-select:none;-webkit-user-select:none}
+.mic.on{background:var(--bud)}
+kbd{font:700 12px var(--body);padding:2px 7px;border-radius:6px;border:1.5px solid var(--edge);background:var(--belly);color:var(--edge)}
+.type{display:flex;gap:8px}
+.type input{flex:1;min-width:0;border:2px solid var(--line);border-radius:14px;padding:9px 12px;background:var(--surface)}
+.civility{border:2.5px solid var(--warn);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;background:var(--sunk)}
+.civility .sugg{font-weight:700}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.opts{display:flex;gap:14px;flex-wrap:wrap;font-size:13.5px}
+.sub{font:600 16px/1.3 var(--display)}
+.transcript{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:300px;overflow:auto}
+.turn{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:14px;background:var(--sunk)}
+.turn .who{flex:none;font:600 13px/1 var(--display);width:24px;height:24px;border-radius:50%;display:grid;place-items:center;border:2px solid var(--edge);color:var(--edge)}
+.t-A .who{background:var(--a)} .t-B .who{background:var(--b)}
+.lines{min-width:0;display:flex;flex-direction:column;gap:3px}
+.orig{font-weight:700}
+.tr{color:var(--ink-soft);font-size:14px}
+.lang{display:inline-block;font-size:11px;font-weight:800;padding:0 7px;margin-right:6px;border-radius:6px;background:var(--surface);border:1px solid var(--line);vertical-align:1px}
+.tone{display:inline-block;font-size:11.5px;font-weight:800;margin-left:6px;padding:0 8px;border-radius:999px;background:var(--c);color:var(--edge);vertical-align:1px}
+.empty{color:var(--ink-soft);font-size:14px;padding:6px}
+.grow{align-self:flex-start}
+
+/* tree pane */
+.tree-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.tree-head h2{font:600 19px/1.3 var(--display)}
+.tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.tree-wrap{border-radius:18px;background:linear-gradient(var(--sunk),var(--surface));border:2px solid var(--line);overflow:hidden}
+#tree{display:block;width:100%;height:auto;font-family:var(--body)}
+#treeList{padding:12px 16px;max-height:520px;overflow:auto}
+#treeList ul{list-style:none;margin:0;padding-left:18px;border-left:2px dashed var(--line)}
+#treeList > ul{padding-left:0;border:0}
+#treeList li{margin:6px 0}
+.linklike{border:0;background:none;padding:0;font-weight:800;cursor:pointer;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
+.linklike.sel{text-decoration-color:var(--bud)}
+.muted{color:var(--ink-soft);font-size:13.5px}
+.ground{fill:var(--leaf);opacity:.25}
+.root{fill:none;stroke:var(--bark);stroke-width:3;stroke-linecap:round;opacity:.55}
+.root-label{font-size:12px;font-weight:700;fill:var(--ink-soft);text-anchor:middle}
+.trunk{fill:var(--bark)}
+.branch{fill:none;stroke:var(--bark);stroke-linecap:round}
+.vine{fill:none;stroke:var(--vine);stroke-width:2.5;stroke-dasharray:6 5;stroke-linecap:round}
+.leaf{fill:var(--leaf);stroke:var(--edge);stroke-width:1}
+.bud{fill:var(--bud);stroke:var(--edge);stroke-width:1.5}
+.node{cursor:pointer}
+.node:focus{outline:none}
+.dot{stroke:var(--edge);stroke-width:2.5}
+.node.sel .dot,.node:focus-visible .dot{stroke-width:5}
+.halo{fill:none;stroke:var(--bud);stroke-width:3;transform-box:fill-box;transform-origin:center;animation:pulse 1.8s ease-out infinite}
+@keyframes pulse{0%{opacity:.9;transform:scale(.85)}100%{opacity:0;transform:scale(1.6)}}
+.label{font-size:12.5px;font-weight:800;fill:var(--ink);text-anchor:middle;paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round;pointer-events:none}
+.rings{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rings button[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.changes{border:2.5px solid var(--leaf);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.changes ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:5px}
+.ctype{font-size:11.5px;font-weight:800;padding:1px 8px;border-radius:999px;background:var(--leaf);color:var(--edge);margin-right:6px}
+.nodecard{border-radius:18px;padding:14px 16px;background:var(--sunk);display:flex;flex-direction:column;gap:10px}
+.nodecard h3{font:600 18px/1.3 var(--display);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.angle{font:800 11.5px var(--body);padding:1px 9px;border-radius:999px;background:var(--surface);border:1.5px solid var(--line)}
+.path{font-size:12.5px;color:var(--ink-soft);font-weight:700}
+.blk h4{font-size:12.5px;font-weight:800;color:var(--ink-soft);margin-bottom:3px}
+.quotes,.buds,.ov ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:5px}
+.buds li{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:6px 10px;border-radius:12px;background:var(--surface);border:1.5px dashed var(--bud)}
+.buds li span{min-width:0;flex:1 1 180px}
+.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.ov{border:2px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.ov h4{font:600 15px/1.3 var(--display)}
+.dtype{font-size:11.5px;font-weight:800;padding:1px 8px;border-radius:999px;margin-right:6px;color:var(--edge);background:var(--peach)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-soft)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.sw{width:11px;height:11px;border-radius:50%;border:1.5px solid var(--edge);display:inline-block}
+
+/* avatars */
+.av svg{display:block;width:100%;height:auto;overflow:visible}
+.av .fur{stroke:var(--edge);stroke-width:3;stroke-linejoin:round}
+.av-A .fur{fill:var(--a)} .av-B .fur{fill:var(--b)}
+.av .inner{fill:var(--belly);opacity:.6}
+.av .belly{fill:var(--belly);opacity:.75}
+.av .eye{fill:var(--edge)} .av .glint{fill:var(--belly)}
+.av .blush{fill:var(--bud);opacity:.45}
+.av .mouth{fill:none;stroke:var(--edge);stroke-width:2.5;stroke-linecap:round}
+.av .shadow{fill:var(--edge);opacity:.12}
+.av .arm,.av .head,.av .mouth{transform-box:view-box}
+.av .arm{transform-origin:86px 88px}
+.av .head{transform-origin:60px 90px}
+.av .mouth{transform-origin:60px 68px}
+.g-wave .arm{animation:wave 1.5s ease-in-out}
+@keyframes wave{0%,100%{transform:rotate(0)}20%,60%{transform:rotate(-140deg)}40%,80%{transform:rotate(-105deg)}}
+.g-bow .head{animation:bow 1.4s ease-in-out}
+@keyframes bow{0%,100%{transform:none}35%,65%{transform:translateY(10px) scaleY(.93)}}
+.g-nod .head,.listen .head{animation:nod .9s ease-in-out 2}
+@keyframes nod{0%,100%{transform:rotate(0)}50%{transform:rotate(7deg) translateY(2px)}}
+.talking .mouth{animation:talk .28s ease-in-out infinite alternate}
+@keyframes talk{from{transform:scaleY(1)}to{transform:scaleY(2.3)}}
+
+/* interlude */
+.interlude{position:fixed;inset:0;z-index:50;background:var(--scrim);display:grid;place-items:center;
+  padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.qcard{max-width:560px;width:100%;background:var(--surface);border:2.5px solid var(--edge);box-shadow:0 6px 0 var(--edge);border-radius:26px;padding:26px 24px;display:flex;flex-direction:column;gap:12px;text-align:center}
+.qtext{font:600 28px/1.35 var(--display)}
+.qmean{font-size:15.5px}
+.qsrc{font-size:13px;color:var(--ink-soft);font-weight:700}
+.dots{display:flex;gap:6px;justify-content:center}
+.dots i{width:9px;height:9px;border-radius:50%;background:var(--bud);animation:bob 1s ease-in-out infinite}
+.dots i:nth-child(2){animation-delay:.15s;background:var(--b)} .dots i:nth-child(3){animation-delay:.3s;background:var(--leaf)}
+@keyframes bob{50%{transform:translateY(-6px)}}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+@media (max-width:520px){.av{width:92px}.qtext{font-size:23px}.stage-head h1{font-size:19px}}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+[hidden]{display:none!important}
+a.ghost{color:inherit;text-decoration:none}
+.btn:disabled,.mic:disabled{opacity:.45}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 36 C20 28 20 22 20 17" style="stroke:var(--bark);fill:none" stroke-width="3.5" stroke-linecap="round"/><ellipse cx="12.5" cy="15" rx="9" ry="7" style="fill:var(--a);stroke:var(--edge)" stroke-width="2.2"/><ellipse cx="27.5" cy="12" rx="9" ry="7" style="fill:var(--b);stroke:var(--edge)" stroke-width="2.2"/><circle cx="20" cy="22" r="3.2" style="fill:var(--bud);stroke:var(--edge)" stroke-width="1.6"/></svg>
+    <span class="name">HarmonyVoice</span><span class="tag">測試版</span>
+  </div>
+  <div class="top-r">
+    <span id="conn" class="chip"><span class="dotc"></span><span>連接緊…</span></span>
+    <button id="copyLink" class="btn small sky" type="button">複製邀請連結</button>
+    <a class="ghost" href="/">開新房間</a>
+  </div>
+</header>
+
+<main class="grid">
+  <section class="card" id="stage" aria-label="對話">
+    <div class="stage-head">
+      <div><p class="eyebrow">今次題目</p><h1 id="convTopic"></h1></div>
+      <div class="meta"><span id="roleChip" class="chip">入緊房…</span><span id="timer" class="timer" aria-label="剩餘時間">05:00</span></div>
+    </div>
+    <p id="soloNote" class="note" hidden>房入面暫時得你一個。撳「複製邀請連結」傳俾朋友，佢一入嚟就係 B；未入嚟之前，你可以撳「A 講／B 講」自己輪流扮兩個人。</p>
+    <div id="extendRow" class="row" hidden><span class="note">夠鐘喇。雙方都同意先延長。</span><button id="extendBtn" class="btn small" type="button">延長 5 分鐘</button></div>
+
+    <div class="duo">
+      <div class="person" id="pA">
+        <div class="bubble" id="bubbleA" aria-live="polite"></div>
+        <div class="av av-A" id="avA"></div>
+        <div class="controls">
+          <span class="who-tag">A</span>
+          <select id="langA" aria-label="A 嘅語言"></select>
+          <select id="gestA" aria-label="A 嘅打招呼動作"></select>
+        </div>
+      </div>
+      <div class="person" id="pB">
+        <div class="bubble" id="bubbleB" aria-live="polite"></div>
+        <div class="av av-B" id="avB"></div>
+        <div class="controls">
+          <span class="who-tag">B</span>
+          <select id="langB" aria-label="B 嘅語言"></select>
+          <select id="gestB" aria-label="B 嘅打招呼動作"></select>
+        </div>
+      </div>
+    </div>
+
+    <div class="audience">
+      <label for="langC">觀眾</label>
+      <select id="langC"><option value="">揀你聽嘅語言</option></select>
+      <span id="audLine"></span>
+    </div>
+
+    <div class="talk">
+      <div class="seg" role="group" aria-label="我坐邊個位">
+        <button id="turnA" type="button" aria-pressed="false">A 講</button>
+        <button id="turnB" type="button" aria-pressed="false">B 講</button>
+      </div>
+      <button id="micBtn" class="btn pink mic" type="button"><span id="micLabel">撳住講，或者撳一下開始</span><kbd>Space</kbd></button>
+    </div>
+    <form id="typeForm" class="type">
+      <input id="typeIn" autocomplete="off" aria-label="打字代替講嘢">
+      <button class="btn sky" type="submit">送出</button>
+    </form>
+    <p id="micNote" class="note small" hidden></p>
+
+    <div id="civility" class="civility" hidden role="alert">
+      <p>呢句可能會被理解為針對個人，而唔係針對論點。要唔要改個講法？</p>
+      <p class="sugg" id="suggText"></p>
+      <div class="row">
+        <button id="useSugg" class="btn small pink" type="button">用建議講法</button>
+        <button id="sendAnyway" class="btn small" type="button">照原句送出</button>
+        <button id="cancelSugg" class="ghost" type="button">取消</button>
+      </div>
+    </div>
+
+    <div class="opts"><label><input type="checkbox" id="ttsOn" checked> 讀出翻譯</label></div>
+    <h2 class="sub">對話記錄</h2>
+    <ol id="transcript" class="transcript"></ol>
+    <button id="growBtn" class="btn pink grow" type="button">結束對話，種入論點樹</button>
+    <p id="stageMsg" class="note small" role="status"></p>
+  </section>
+
+  <section class="card" aria-label="論點樹">
+    <div class="tree-head">
+      <div><p class="eyebrow">論點樹</p><h2 id="treeTopic"></h2></div>
+      <div class="tools">
+        <div class="seg" role="group" aria-label="顯示方式">
+          <button id="viewTree" type="button" aria-pressed="true">樹</button>
+          <button id="viewList" type="button" aria-pressed="false">列表</button>
+        </div>
+        <button id="zoomIn" class="ghost" type="button">拉近</button>
+        <button id="zoomOut" class="ghost" type="button">拉遠</button>
+        <button id="newTopicBtn" class="ghost" type="button">開新題目</button>
+      </div>
+    </div>
+    <form id="topicForm" class="type" hidden>
+      <input id="topicIn" autocomplete="off" maxlength="200" aria-label="新題目" placeholder="例如：AI 應唔應該取代老師？">
+      <button class="btn small sky" type="submit">開始</button>
+    </form>
+    <div id="changes" class="changes" hidden></div>
+    <div class="tree-wrap">
+      <svg id="tree" viewBox="0 0 640 520" role="group" aria-label="論點樹，撳圓點睇詳情"></svg>
+      <div id="treeList" hidden></div>
+    </div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--a)"></i>論點（顏色 = 探討角度）</span>
+      <span><i class="sw" style="background:var(--leaf)"></i>葉 = 講法</span>
+      <span><i class="sw" style="background:var(--bud)"></i>花蕾 = 未探索問題</span>
+      <span><i class="sw" style="border-style:dashed;background:transparent;border-color:var(--vine)"></i>藤 = 張力／回應</span>
+    </div>
+    <div class="rings"><span class="eyebrow">年輪</span><span id="ringChips" class="row"></span></div>
+    <div id="nodeCard" class="nodecard" aria-live="polite"></div>
+    <div id="overview" class="overview"></div>
+  </section>
+</main>
+
+<div id="interlude" class="interlude" hidden role="dialog" aria-modal="true" aria-labelledby="qText">
+  <div class="qcard">
+    <p class="eyebrow">AI 整理緊論點，通常要半分鐘至一分鐘</p>
+    <p class="qtext" id="qText"></p>
+    <p class="qmean" id="qMean"></p>
+    <p class="qsrc" id="qSrc"></p>
+    <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div><button id="stopGrow" class="ghost" type="button">收埋，喺背後繼續</button></div>
+  </div>
+</div>
+
+<script>
+const W = 640, H = 520, TX = 320, TY = 330, GROUND = 440;
+const LANGS = {
+  /* Cantonese, then the world's top 10 languages by total speakers (Ethnologue 2026) */
+  yue:{name:'廣東話', sr:'yue-Hant-HK', tts:'zh-HK'}, en:{name:'英語', sr:'en-US', tts:'en-US'},
+  zh:{name:'普通話', sr:'cmn-Hans-CN', tts:'zh-CN'}, hi:{name:'印地語', sr:'hi-IN', tts:'hi-IN'},
+  es:{name:'西班牙語', sr:'es-ES', tts:'es-ES'}, ar:{name:'阿拉伯語', sr:'ar-SA', tts:'ar-SA'},
+  fr:{name:'法語', sr:'fr-FR', tts:'fr-FR'}, bn:{name:'孟加拉語', sr:'bn-IN', tts:'bn-IN'},
+  pt:{name:'葡萄牙語', sr:'pt-BR', tts:'pt-BR'}, id:{name:'印尼語', sr:'id-ID', tts:'id-ID'},
+  ur:{name:'烏爾都語', sr:'ur-PK', tts:'ur-PK'},
+};
+const GESTURES = {wave:'揮手', bow:'鞠躬', nod:'點頭'};
+const QUOTES = [
+  {text:'和而不同', mean:'和諧唔等於意見一致。', src:'中國 · 《論語・子路》'},
+  {text:'禮之用，和為貴', mean:'待人處事，以和睦為最可貴。', src:'中國 · 《論語・學而》'},
+  {text:'Umuntu ngumuntu ngabantu', mean:'人因為其他人而成為人。', src:'南部非洲 · Ubuntu 諺語'},
+  {text:'Vasudhaiva Kutumbakam', mean:'世界是一家。', src:'印度 · 《摩訶奧義書》'},
+  {text:'我不同意你的觀點，但我誓死捍衛你說話的權利', mean:'尊重言論自由。', src:'Evelyn Beatrice Hall，1906（概括伏爾泰思想）'},
+  {text:'退一步海闊天空', mean:'讓一步，路就闊好多。', src:'中國俗語'},
+];
+
+const $ = q => document.querySelector(q);
+function h(tag, props = {}, ...kids){
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)){
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v != null && v !== false) el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
+  return el;
+}
+function s(tag, attrs = {}, ...kids){
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, v);
+  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  return el;
+}
+
+/* ---------- state (the room on the server is the source of truth) ---------- */
+let tree = {topic:'', roots:[], nodes:[], vines:[], overview:{common:[], disagreements:[]}, changes:[], newIds:[], enrichedIds:[]};
+let rings = [], turns = [], convTopic = '', treeVersion = -1, selected = null, viewing = -1, zoom = 1, view = 'tree';
+let busy = false, timerLeft = 300, timerId = null, pending = null, listening = false, rec = null;
+let ws = null, connected = false, retry = 0, myId = null, mySeat = null, members = [], audLang = '';
+const people = {A:{lang:'yue', gesture:'wave'}, B:{lang:'en', gesture:'bow'}};
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const shown = () => viewing < 0 ? tree : rings[viewing].tree;
+const solo = () => members.length <= 1;
+const isSpeaker = () => mySeat === 'A' || mySeat === 'B';
+const heldByOther = seat => members.some(m => m.seat === seat && m.id !== myId);
+const otherSeat = seat => seat === 'A' ? 'B' : 'A';
+
+/* ---------- room connection ---------- */
+let roomId = new URLSearchParams(location.search).get('room');
+if (!roomId || !/^[A-Za-z0-9_-]{1,40}$/.test(roomId)){
+  roomId = Math.random().toString(36).slice(2, 10);
+  history.replaceState(null, '', '?room=' + roomId);
+}
+function connect(){
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/room/' + roomId);
+  ws.onopen = () => { retry = 0; connected = true; renderRole(); };
+  ws.onmessage = e => onMessage(JSON.parse(e.data));
+  ws.onclose = () => { connected = false; renderRole(); setTimeout(connect, Math.min(10000, 1000 * 2 ** retry++)); };
+}
+function sendWS(m){ if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+function onMessage(m){
+  if (m.type === 'welcome'){
+    myId = m.you.id; mySeat = m.you.seat; applyState(m.state);
+    if (audLang) sendWS({type:'audLang', lang:audLang});
+  } else if (m.type === 'members'){
+    members = m.members;
+    const me = members.find(x => x.id === myId); if (me) mySeat = me.seat;
+    renderRole(); renderBubbles(); renderAudience();
+  } else if (m.type === 'state') applyState(m.state);
+  else if (m.type === 'turn') onTurn(m.turn);
+  else if (m.type === 'status') onStatus(m.seat, m.status);
+  else if (m.type === 'growing') showInterlude();
+  else if (m.type === 'growError'){ hideInterlude(); msg(errCopy({code:m.code})); }
+}
+function applyState(st){
+  const newTree = st.treeVersion !== treeVersion, grown = newTree && treeVersion >= 0 && st.tree.changes && st.tree.changes.length;
+  tree = st.tree; rings = st.rings || []; turns = st.turns; convTopic = st.convTopic; treeVersion = st.treeVersion;
+  for (const p of ['A','B']) Object.assign(people[p], st.people[p]);
+  for (const p of ['A','B']){ $('#lang' + p).value = people[p].lang; $('#gest' + p).value = people[p].gesture; }
+  if (newTree){
+    viewing = -1; hideInterlude(); $('#changes').hidden = true;
+    if (grown){
+      selected = tree.newIds[0] || tree.enrichedIds[0] || tree.changes[0].node;
+      showChanges(); msg('論點樹長大咗。撳花蕾「搵人傾呢個」可以開始下一場對話。');
+    } else if (!tree.nodes.some(n => n.id === selected)) selected = (tree.nodes[1] || tree.nodes[0] || {}).id || null;
+  }
+  if (!turns.length) resetTimer();
+  renderAll();
+}
+function onTurn(t){
+  turns.push(t);
+  if (!timerId) startTimer();
+  const other = otherSeat(t.who);
+  animate(other, 'listen');
+  renderTalk();
+  // who listens on this device: my seat, my audience language, or (when I'm alone) the other seat
+  let lang = null, bubble = null;
+  if (mySeat === 'C') lang = audLang;
+  else if (mySeat !== t.who){ lang = people[mySeat].lang; bubble = mySeat; }
+  else if (solo()){ lang = people[other].lang; bubble = other; }
+  if (lang && lang !== t.lang && t.tr[lang]) speak(t.tr[lang], lang, bubble);
+  if (solo() && mySeat === t.who) sendWS({type:'seat', seat:other});
+}
+function onStatus(seat, status){
+  const av = $('#av' + seat);
+  if (status === 'recording'){ cloudBubble(seat); animate(seat, 'g-' + people[seat].gesture); av.classList.add('talking'); }
+  else if (status === 'translating'){ cloudBubble(seat); av.classList.remove('talking'); }
+  else { av.classList.remove('talking'); renderBubbles(); }
+}
+
+/* ---------- translation ---------- */
+function targetLangs(src){
+  const aud = members.filter(m => m.seat === 'C' && m.lang).map(m => m.lang);
+  return [...new Set([people.A.lang, people.B.lang, ...aud].filter(c => c && c !== src))];
+}
+async function translateTurn(text, src, targets){
+  const res = await fetch('/api/translate', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({text, src, targets, topic:convTopic})});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw {code:data.code || 'http'};
+  return data;
+}
+function errCopy(e){
+  if (e instanceof TypeError) return '連唔到伺服器，請檢查網絡。';
+  return ({rate_limited:'AI 用得太密（免費版有次數限制），等一陣再試。', no_key:'網站仲未設定 AI key，請通知管理員。',
+    ai_key:'網站嘅 AI key 唔啱或者失效，請通知管理員。', overloaded:'AI 服務而家太忙，請等一陣再試。',
+    invalid_json:'AI 回覆格式唔啱，請再試一次。', timeout:'翻譯太耐冇回應，請再試一次。'})[e && e.code] || '連線出咗問題，請再試。';
+}
+function msg(t){ $('#stageMsg').textContent = t; }
+async function send(text, viaVoice){
+  text = (text || '').trim();
+  if (!text || busy || pending || !isSpeaker()) return;
+  if (!viaVoice) animate(mySeat, 'g-' + people[mySeat].gesture);
+  if (!timerId) startTimer();
+  const who = mySeat, src = people[who].lang, targets = targetLangs(src), t0 = viaVoice ? releasedAt : performance.now();
+  busy = true; msg(''); setControls();
+  cloudBubble(who); sendWS({type:'status', seat:who, status:'translating'});
+  // reuse the translation started while the speaker was still talking, if it was for exactly this text
+  const ready = viaVoice && spec && spec.text === text && spec.key === src + '>' + targets.join(',') ? spec.promise : null;
+  spec = null; clearTimeout(specTimer);
+  try {
+    const job = ready ? ready.catch(() => translateTurn(text, src, targets)) : translateTurn(text, src, targets);
+    const res = await Promise.race([job, new Promise((_, no) => setTimeout(() => no({code:'timeout'}), 25000))]);
+    if (res.attack && res.suggestion){ pending = {who, src, text, res}; showCivility(); renderBubbles(); sendWS({type:'status', seat:who, status:'idle'}); }
+    else commit(who, src, text, res);
+    micNote(`由放手到翻譯好：${((performance.now() - t0) / 1000).toFixed(1)} 秒`);
+  } catch (e){ msg(errCopy(e)); renderBubbles(); sendWS({type:'status', seat:who, status:'idle'}); }
+  finally { busy = false; setControls(); }
+}
+function commit(who, src, text, res){
+  pending = null; $('#civility').hidden = true; $('#typeIn').value = '';
+  sendWS({type:'turn', turn:{who, lang:src, text, tr:res.tr, tone:res.tone}});
+}
+function speak(text, lang, who){
+  if (!$('#ttsOn').checked || !('speechSynthesis' in window)) return;
+  try {
+    const u = new SpeechSynthesisUtterance(text), code = LANGS[lang].tts.toLowerCase(), voices = speechSynthesis.getVoices();
+    u.lang = LANGS[lang].tts;
+    const v = voices.find(x => x.lang.replace('_', '-').toLowerCase() === code) || voices.find(x => x.lang.toLowerCase().startsWith(code.slice(0, 2)));
+    if (v) u.voice = v;
+    const b = who && $('#bubble' + who);
+    u.onstart = () => b && b.classList.add('playing');
+    u.onend = u.onerror = () => b && b.classList.remove('playing');
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  } catch {}
+}
+function showCivility(){ $('#suggText').textContent = '建議講法：' + pending.res.suggestion; $('#civility').hidden = false; }
+$('#useSugg').onclick = () => { const t = pending.res.suggestion; pending = null; $('#civility').hidden = true; send(t); };
+$('#sendAnyway').onclick = () => { const p = pending; commit(p.who, p.src, p.text, p.res); };
+$('#cancelSugg').onclick = () => { pending = null; $('#civility').hidden = true; };
+
+/* ---------- push to talk ---------- */
+function micNote(t){ const el = $('#micNote'); el.textContent = t; el.hidden = !t; }
+function setTalking(on, label){
+  $('#micBtn').classList.toggle('on', on);
+  $('#micLabel').textContent = label || (on ? '講緊…放手就送出' : '撳住講，或者撳一下開始');
+  if (isSpeaker()) $('#av' + mySeat).classList.toggle('talking', on);
+}
+const MIC_BLOCKED = '瀏覽器冇俾咪權限。撳網址列左邊嘅圖示，將「麥克風」改做允許，再重新載入。';
+const CLOUD = '<svg class="cloud" viewBox="0 0 200 124" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="M44 90 A20 20 0 0 1 36 52 A24 24 0 0 1 70 26 A30 30 0 0 1 124 22 A24 24 0 0 1 164 46 A22 22 0 0 1 162 88 Q103 98 44 90 Z"/><circle cx="92" cy="106" r="7"/><circle cx="82" cy="118" r="4"/><g class="cdots"><circle cx="82" cy="60" r="6"/><circle class="d2" cx="100" cy="60" r="6"/><circle class="d3" cx="118" cy="60" r="6"/></g></svg>';
+let micError = '', heard = '', pressAt = 0, latched = false, releasedAt = 0, spec = null, specTimer = 0;
+/* speculative translation: once the speaker pauses for 0.6 s, translate what has been heard so far.
+   If nothing changes before release, that result is delivered at once; otherwise the final text is translated. */
+function speculate(){
+  clearTimeout(specTimer);
+  specTimer = setTimeout(() => {
+    const text = heard.trim();
+    if (!listening || !text || (spec && (spec.text === text || !spec.done))) return;
+    const src = people[mySeat].lang, targets = targetLangs(src);
+    const sp = {text, key:src + '>' + targets.join(','), done:false};
+    sp.promise = translateTurn(text, src, targets);
+    sp.promise.catch(() => {}).finally(() => { sp.done = true; if (listening && heard.trim() !== sp.text) speculate(); });
+    spec = sp;
+  }, 600);
+}
+function cloudBubble(who){ const el = $('#bubble' + who); el.classList.add('recording'); el.innerHTML = CLOUD; }
+function micFail(t){
+  micError = t; micNote(t);
+  const el = $('#bubble' + mySeat); el.classList.remove('recording');
+  el.replaceChildren(h('span', {class:'bub-label'}, '錄唔到音'), h('span', {}, t));
+  sendWS({type:'status', seat:mySeat, status:'idle'});
+}
+function startListening(){
+  if (busy || listening || pending || !isSpeaker() || !connected) return;
+  listening = true; micError = ''; heard = ''; rec = null; spec = null; clearTimeout(specTimer);
+  animate(mySeat, 'g-' + people[mySeat].gesture); setTalking(true); micNote(''); cloudBubble(mySeat);
+  sendWS({type:'status', seat:mySeat, status:'recording'});
+  if (!SR) return micFail('呢個瀏覽器唔支援語音輸入（例如 Firefox）。請用 Chrome、Edge 或 Safari，或者打字代替。');
+  try {
+    const r = rec = new SR(); r.lang = LANGS[people[mySeat].lang].sr; r.interimResults = true; r.continuous = true;
+    r.onresult = e => { if (rec === r){ heard = Array.from(e.results, x => x[0].transcript).join(''); speculate(); } };
+    r.onerror = e => { if (rec === r && e.error !== 'aborted') micFail(e.error === 'not-allowed' || e.error === 'service-not-allowed' ? MIC_BLOCKED
+      : e.error === 'no-speech' ? '收唔到聲，請再試。' : '語音輸入出錯（' + e.error + '），請打字代替。'); };
+    r.onend = () => { if (rec === r) finishListening(); };
+    r.start();
+  } catch { rec = null; micFail('語音輸入開唔到，請打字代替。'); }
+}
+function stopListening(){
+  if (!listening) return;
+  releasedAt = performance.now();
+  if (!rec || micError) return finishListening();
+  // don't wait for the recogniser to wind down: take what it has heard after at most 0.5 s
+  const r = rec; r.stop();
+  setTimeout(() => { if (rec === r){ try { r.abort(); } catch {} finishListening(); } }, 500);
+}
+function finishListening(){
+  if (!listening) return;
+  listening = false; latched = false; rec = null; setTalking(false);
+  if (micError) return;
+  const t = heard.trim();
+  if (t) send(t, true); else micFail('聽唔到你講咩，請再試一次。');
+}
+/* hold = talk while held, deliver on release; quick tap = start, tap again to deliver */
+function pressDown(){
+  if (listening){ if (latched) stopListening(); return; }
+  pressAt = performance.now(); latched = false; startListening();
+}
+function pressUp(){
+  if (!listening || latched) return;
+  if (performance.now() - pressAt < 350){ latched = true; setTalking(true, '錄緊音…再撳一下送出'); return; }
+  stopListening();
+}
+window.addEventListener('blur', stopListening);
+const isTyping = el => el && (el.id === 'typeIn' || el.id === 'topicIn' || el.isContentEditable);
+document.addEventListener('keydown', e => {
+  if (e.code !== 'Space' || isTyping(e.target) || !$('#interlude').hidden) return;
+  e.preventDefault();
+  if (e.target !== document.body && e.target.blur) e.target.blur();
+  if (!e.repeat) pressDown();
+});
+document.addEventListener('keyup', e => { if (e.code === 'Space' && !isTyping(e.target)){ e.preventDefault(); pressUp(); } });
+const mic = $('#micBtn');
+mic.addEventListener('pointerdown', e => { e.preventDefault(); pressDown(); });
+['pointerup','pointercancel'].forEach(t => mic.addEventListener(t, pressUp));
+$('#typeForm').addEventListener('submit', e => { e.preventDefault(); send($('#typeIn').value); });
+
+/* ---------- avatars ---------- */
+function avatarSVG(kind){
+  const ears = kind === 'bunny'
+    ? '<ellipse cx="45" cy="20" rx="9" ry="21" class="fur"/><ellipse cx="45" cy="22" rx="4" ry="13" class="inner"/><ellipse cx="75" cy="20" rx="9" ry="21" class="fur"/><ellipse cx="75" cy="22" rx="4" ry="13" class="inner"/>'
+    : '<circle cx="32" cy="29" r="12" class="fur"/><circle cx="32" cy="29" r="6" class="inner"/><circle cx="88" cy="29" r="12" class="fur"/><circle cx="88" cy="29" r="6" class="inner"/>';
+  return `<svg viewBox="0 0 120 132" aria-hidden="true"><ellipse cx="60" cy="126" rx="34" ry="5" class="shadow"/>
+<ellipse cx="60" cy="99" rx="30" ry="24" class="fur"/><ellipse cx="60" cy="103" rx="17" ry="14" class="belly"/>
+<ellipse cx="34" cy="97" rx="8" ry="12" class="fur"/><g class="arm"><ellipse cx="86" cy="97" rx="8" ry="12" class="fur"/></g>
+<ellipse cx="46" cy="121" rx="10" ry="6" class="fur"/><ellipse cx="74" cy="121" rx="10" ry="6" class="fur"/>
+<g class="head">${ears}<circle cx="60" cy="56" r="34" class="fur"/>
+<circle cx="48" cy="55" r="5.5" class="eye"/><circle cx="72" cy="55" r="5.5" class="eye"/>
+<circle cx="49.8" cy="53" r="1.8" class="glint"/><circle cx="73.8" cy="53" r="1.8" class="glint"/>
+<ellipse cx="38" cy="66" rx="6" ry="3.5" class="blush"/><ellipse cx="82" cy="66" rx="6" ry="3.5" class="blush"/>
+<path d="M54 66 Q60 72 66 66" class="mouth"/></g></svg>`;
+}
+$('#avA').innerHTML = avatarSVG('bunny');
+$('#avB').innerHTML = avatarSVG('bear');
+function animate(p, cls){
+  const el = $('#av' + p);
+  el.classList.remove('g-wave','g-bow','g-nod','listen');
+  void el.offsetWidth;
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), 1900);
+}
+
+/* ---------- conversation rendering ---------- */
+function renderRole(){
+  const chip = $('#conn');
+  chip.className = 'chip' + (connected ? ' ok' : ' off');
+  chip.lastElementChild.textContent = connected ? `已連接 · 房入面 ${members.length} 人` : '連接緊…';
+  $('#roleChip').textContent = !mySeat ? '入緊房…' : isSpeaker() ? `你係 ${mySeat}（${LANGS[people[mySeat].lang].name}）` : '你係觀眾';
+  for (const p of ['A','B']){
+    $('#p' + p).classList.toggle('active', mySeat === p);
+    $('#turn' + p).setAttribute('aria-pressed', mySeat === p);
+    $('#turn' + p).disabled = heldByOther(p);
+    $('#lang' + p).disabled = $('#gest' + p).disabled = heldByOther(p);
+  }
+  $('#langC').disabled = mySeat !== 'C';
+  $('#soloNote').hidden = !connected || !solo();
+  $('#micBtn').disabled = !isSpeaker() || !connected;
+  $('#typeIn').placeholder = isSpeaker() ? `以 ${mySeat}（${LANGS[people[mySeat].lang].name}）身份打字，Enter 送出` : '觀眾唔可以講嘢，只可以聽';
+  setControls();
+}
+function setControls(){
+  const can = isSpeaker() && connected && !busy;
+  $('#typeIn').disabled = !isSpeaker();
+  $('#typeForm').querySelector('button').disabled = !can;
+  $('#growBtn').disabled = !connected;
+}
+function renderBubbles(){
+  const last = turns[turns.length - 1];
+  for (const p of ['A','B']){
+    const el = $('#bubble' + p), lang = people[p].lang;
+    el.classList.remove('recording');
+    if (!last){ el.replaceChildren(h('span', {class:'hint'}, p === mySeat ? '輪到你講' : heldByOther(p) ? '聽緊…' : '等緊朋友入嚟')); continue; }
+    const txt = last.lang === lang ? last.text : last.tr[lang];
+    const tone = last.tone[lang], heardIt = last.who !== p && last.lang !== lang && txt;
+    el.replaceChildren(...[
+      h('span', {class:'bub-label'}, last.who === p ? '我講' : '我聽到'),
+      h('span', {}, h('span', {dir:'auto'}, txt || '（未有呢個語言嘅翻譯，下一句會用新語言）'), tone ? h('span', {class:'tone'}, tone) : null),
+      heardIt ? h('button', {class:'ghost replay', type:'button', onclick:() => speak(txt, lang, p)}, '再聽一次') : null].filter(Boolean));
+  }
+}
+function renderAudience(){
+  const el = $('#audLine'), aud = members.filter(m => m.seat === 'C'), last = turns[turns.length - 1];
+  if (mySeat === 'C'){
+    if (!audLang){ el.textContent = '揀你聽嘅語言，每句會即時翻譯俾你。'; return; }
+    const txt = last && (last.lang === audLang ? last.text : last.tr[audLang]);
+    el.textContent = txt ? `聽到：${txt}` : '下一句開始會翻譯俾你。';
+    return;
+  }
+  const names = [...new Set(aud.map(m => m.lang).filter(Boolean))].map(c => LANGS[c].name);
+  el.textContent = aud.length ? `觀眾 ${aud.length} 人${names.length ? '（' + names.join('、') + '）' : ''}，每句會同時翻譯俾佢哋。`
+    : '而家冇觀眾。第三個入嚟嘅人會做觀眾。';
+}
+function renderTranscript(){
+  const ol = $('#transcript');
+  if (!turns.length){ ol.replaceChildren(h('li', {class:'empty'}, '未有對話。撳住講嘢或者打字開始。')); return; }
+  ol.replaceChildren(...turns.map(t => h('li', {class:'turn t-' + t.who},
+    h('span', {class:'who'}, t.who),
+    h('div', {class:'lines'},
+      h('p', {class:'orig'}, h('span', {class:'lang'}, (LANGS[t.lang] || {}).name || t.lang), h('span', {dir:'auto'}, t.text),
+        t.tone[t.lang] ? h('span', {class:'tone'}, t.tone[t.lang]) : null),
+      Object.entries(t.tr).map(([c, x]) => h('p', {class:'tr'}, h('span', {class:'lang'}, (LANGS[c] || {}).name || c), h('span', {dir:'auto'}, x),
+        t.tone[c] ? h('span', {class:'tone'}, t.tone[c]) : null))))));
+  ol.scrollTop = ol.scrollHeight;
+}
+function renderTalk(){ renderBubbles(); renderTranscript(); renderAudience(); $('#convTopic').textContent = convTopic; }
+
+/* ---------- timer ---------- */
+function tick(){ const m = Math.max(0, timerLeft); $('#timer').textContent = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
+function startTimer(){
+  clearInterval(timerId); timerLeft = 300; tick(); $('#extendRow').hidden = true;
+  timerId = setInterval(() => { timerLeft--; tick(); if (timerLeft <= 0){ clearInterval(timerId); $('#extendRow').hidden = false; } }, 1000);
+}
+function resetTimer(){ clearInterval(timerId); timerId = null; timerLeft = 300; tick(); $('#extendRow').hidden = true; }
+$('#extendBtn').onclick = startTimer;
+
+/* ---------- growing the tree (done by the server, shown to everyone in the room) ---------- */
+let quoteTimer = null;
+function showInterlude(){
+  clearInterval(quoteTimer);
+  let i = Math.floor(Math.random() * QUOTES.length);
+  const show = () => { const q = QUOTES[i++ % QUOTES.length]; $('#qText').textContent = q.text; $('#qMean').textContent = q.mean; $('#qSrc').textContent = q.src; };
+  show(); quoteTimer = setInterval(show, 7000);
+  $('#interlude').hidden = false; $('#stopGrow').focus();
+}
+function hideInterlude(){ clearInterval(quoteTimer); $('#interlude').hidden = true; }
+$('#stopGrow').onclick = hideInterlude;
+$('#growBtn').onclick = () => { if (!turns.length){ msg('未有對話可以種入。'); return; } msg(''); sendWS({type:'grow'}); };
+function showChanges(){
+  const box = $('#changes'), t = tree;
+  if (!t.changes.length){ box.hidden = true; return; }
+  const title = id => (t.nodes.find(n => n.id === id) || {}).title || id;
+  box.replaceChildren(
+    h('div', {class:'row', style:'justify-content:space-between'}, h('strong', {}, '今次對話令棵樹：'), h('button', {class:'ghost', type:'button', onclick:() => { box.hidden = true; }}, '收埋')),
+    h('ul', {}, t.changes.map(c => h('li', {}, h('span', {class:'ctype'}, c.type),
+      h('button', {class:'linklike', type:'button', onclick:() => select(c.node)}, title(c.node)), h('span', {class:'muted'}, '　' + c.reason)))));
+  box.hidden = false;
+}
+function startFromBud(q){
+  sendWS({type:'topic', convTopic:q}); pending = null; $('#civility').hidden = true;
+  msg('新題目已設定，房入面每個人都會見到。');
+  $('#stage').scrollIntoView({behavior:'smooth', block:'start'});
+}
+$('#newTopicBtn').onclick = () => { $('#topicForm').hidden = !$('#topicForm').hidden; if (!$('#topicForm').hidden) $('#topicIn').focus(); };
+$('#topicForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const t = $('#topicIn').value.trim(); if (!t) return;
+  sendWS({type:'newTree', topic:t}); $('#topicIn').value = ''; $('#topicForm').hidden = true;
+});
+
+/* ---------- tree rendering ---------- */
+function layout(t){
+  const kids = {};
+  t.nodes.forEach(n => (kids[n.parent || 'root'] = kids[n.parent || 'root'] || []).push(n));
+  const sizeMemo = {};
+  const size = id => sizeMemo[id] || (sizeMemo[id] = 1 + (kids[id] || []).reduce((a, c) => a + size(c.id), 0));
+  const LEN = [0, 128, 92, 68], pos = {};
+  const place = (pid, x, y, a0, a1, depth) => {
+    const list = kids[pid] || [], total = list.reduce((a, c) => a + size(c.id), 0);
+    let a = a0;
+    for (const c of list){
+      const span = (a1 - a0) * size(c.id) / total, ang = a + span / 2; a += span;
+      const L = LEN[Math.min(depth, 3)], rad = ang * Math.PI / 180;
+      const x2 = x + L * Math.sin(rad), y2 = y - L * Math.cos(rad);
+      pos[c.id] = {x:x2, y:y2, ang, depth, px:x, py:y};
+      place(c.id, x2, y2, ang - span / 2, ang + span / 2, depth + 1);
+    }
+  };
+  place('root', TX, TY, -72, 72, 1);
+  return pos;
+}
+function angleColors(t){
+  const byId = Object.fromEntries(t.nodes.map(n => [n.id, n]));
+  const pal = ['var(--a)','var(--b)','var(--c)','var(--leaf)','var(--peach)','var(--warn)'], top = {}, out = {};
+  t.nodes.filter(n => !n.parent).forEach((n, i) => { top[n.id] = pal[i % pal.length]; });
+  for (const n of t.nodes){ let x = n, g = 0; while (x.parent && byId[x.parent] && g++ < 10) x = byId[x.parent]; out[n.id] = top[x.id] || pal[0]; }
+  return out;
+}
+const hash = str => [...str].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7);
+function renderTree(){
+  const t = shown(), svg = $('#tree'), pos = layout(t), color = angleColors(t);
+  const fresh = new Set(viewing < 0 ? (t.newIds || []) : []);
+  $('#treeTopic').textContent = t.topic;
+  const back = s('g'), vines = s('g'), deco = s('g'), dots = s('g'), labels = s('g');
+  back.append(s('ellipse', {cx:TX, cy:GROUND + 6, rx:250, ry:16, class:'ground'}));
+  (t.roots || []).forEach((r, i, all) => {
+    const dx = (i - (all.length - 1) / 2) * 120;
+    back.append(s('path', {d:`M${TX} ${GROUND} Q${TX + dx * 0.4} ${GROUND + 30} ${TX + dx} ${GROUND + 48}`, class:'root'}),
+      s('text', {x:TX + dx, y:GROUND + 66, class:'root-label'}, r));
+  });
+  back.append(s('path', {d:`M${TX - 11} ${GROUND} Q${TX - 4} ${(GROUND + TY) / 2} ${TX - 3} ${TY} L${TX + 3} ${TY} Q${TX + 4} ${(GROUND + TY) / 2} ${TX + 11} ${GROUND} Z`, class:'trunk'}));
+  for (const n of t.nodes){
+    const p = pos[n.id]; if (!p) continue;
+    const dx = p.x - p.px, dy = p.y - p.py, len = Math.hypot(dx, dy) || 1, bend = (hash(n.id) % 9 - 4) * 3;
+    const cx = (p.x + p.px) / 2 - dy / len * bend, cy = (p.y + p.py) / 2 + dx / len * bend;
+    const w = [0, 9, 6, 4][Math.min(p.depth, 3)] + Math.min(3, n.quotes.length * 0.7);
+    back.append(s('path', {d:`M${p.px} ${p.py} Q${cx} ${cy} ${p.x} ${p.y}`, class:'branch', 'stroke-width':w}));
+    const r = p.depth === 1 ? 12 : 9;
+    n.quotes.slice(0, 4).forEach((q, i) => {
+      const a = (p.ang + (i % 2 ? 1 : -1) * (48 + i * 14)) * Math.PI / 180, lx = p.x + (r + 7) * Math.sin(a), ly = p.y - (r + 7) * Math.cos(a);
+      deco.append(s('ellipse', {cx:lx, cy:ly, rx:6.5, ry:3.3, class:'leaf', transform:`rotate(${p.ang + (i % 2 ? 55 : -55)} ${lx} ${ly})`}));
+    });
+    n.buds.forEach((b, i) => {
+      const a = (p.ang + (i ? 24 : -24) * (n.buds.length > 1 ? 1 : 0)) * Math.PI / 180, bx = p.x + (r + 13) * Math.sin(a), by = p.y - (r + 13) * Math.cos(a);
+      deco.append(s('circle', {cx:bx, cy:by, r:4.5, class:'bud'}, s('title', {}, b)));
+    });
+    dots.append(s('g', {class:'node' + (n.id === selected ? ' sel' : ''), tabindex:'0', role:'button', 'aria-label':n.title, 'data-id':n.id},
+      fresh.has(n.id) ? s('circle', {cx:p.x, cy:p.y, r:r + 5, class:'halo'}) : null,
+      s('circle', {cx:p.x, cy:p.y, r, class:'dot', style:`fill:${color[n.id]}`}),
+      s('title', {}, n.summary || n.title)));
+    labels.append(s('text', {x:Math.min(W - 46, Math.max(46, p.x)), y:p.y - r - 8, class:'label'}, n.title));
+  }
+  for (const v of t.vines || []){
+    const a = pos[v.a], b = pos[v.b]; if (!a || !b) continue;
+    vines.append(s('path', {d:`M${a.x} ${a.y} Q${(a.x + b.x) / 2} ${Math.min(a.y, b.y) - 40} ${b.x} ${b.y}`, class:'vine'}, s('title', {}, v.label)));
+  }
+  svg.replaceChildren(back, vines, deco, dots, labels);
+  applyZoom();
+}
+function applyZoom(){
+  const t = shown(), p = selected && layout(t)[selected];
+  const cx = zoom > 1 && p ? p.x : W / 2, cy = zoom > 1 && p ? p.y : H / 2;
+  const vw = W / zoom, vh = H / zoom;
+  const x = Math.min(W - vw, Math.max(0, cx - vw / 2)), y = Math.min(H - vh, Math.max(0, cy - vh / 2));
+  $('#tree').setAttribute('viewBox', `${x} ${y} ${vw} ${vh}`);
+}
+$('#tree').addEventListener('click', e => { const g = e.target.closest('.node'); if (g) select(g.getAttribute('data-id')); });
+$('#tree').addEventListener('keydown', e => { const g = e.target.closest('.node'); if (g && e.key === 'Enter') select(g.getAttribute('data-id')); });
+$('#zoomIn').onclick = () => { zoom = Math.min(2.6, zoom * 1.6); applyZoom(); };
+$('#zoomOut').onclick = () => { zoom = Math.max(1, zoom / 1.6); if (zoom < 1.05) zoom = 1; applyZoom(); };
+function select(id){
+  selected = id; renderTree(); renderList(); renderCard();
+  if (view === 'tree'){ const g = $(`#tree .node[data-id="${CSS.escape(id)}"]`); if (g) g.focus({preventScroll:true}); }
+}
+function renderList(){
+  const t = shown(), kids = {};
+  t.nodes.forEach(n => (kids[n.parent || 'root'] = kids[n.parent || 'root'] || []).push(n));
+  const build = pid => (kids[pid] || []).length ? h('ul', {}, kids[pid].map(n => h('li', {},
+    h('button', {class:'linklike' + (n.id === selected ? ' sel' : ''), type:'button', onclick:() => select(n.id)}, n.title),
+    n.summary ? h('span', {class:'muted'}, '：' + n.summary) : null, build(n.id)))) : null;
+  $('#treeList').replaceChildren(build('root') || h('p', {class:'muted'}, '未有論點。'));
+}
+function setView(v){
+  view = v;
+  $('#viewTree').setAttribute('aria-pressed', v === 'tree'); $('#viewList').setAttribute('aria-pressed', v === 'list');
+  $('#tree').style.display = v === 'tree' ? '' : 'none'; $('#treeList').hidden = v !== 'list';
+  $('#zoomIn').hidden = $('#zoomOut').hidden = v !== 'tree';
+}
+$('#viewTree').onclick = () => setView('tree');
+$('#viewList').onclick = () => setView('list');
+function renderCard(){
+  const t = shown(), el = $('#nodeCard'), byId = Object.fromEntries(t.nodes.map(n => [n.id, n])), n = byId[selected];
+  if (!n){ el.replaceChildren(h('p', {class:'muted'}, t.nodes.length ? '撳樹上任何一點，睇呢度傾過咩、仲有咩未解決。' : '呢棵樹仲係一粒種子。傾完第一場對話，撳「種入論點樹」佢就會開始生長。')); return; }
+  const path = []; for (let x = n, g = 0; x && g < 10; x = byId[x.parent], g++) path.unshift(x.title);
+  el.replaceChildren(...[
+    h('p', {class:'path'}, [t.topic, ...path].join(' → ')),
+    h('h3', {}, n.title, n.angle ? h('span', {class:'angle'}, n.angle) : null),
+    n.summary ? h('p', {}, n.summary) : null,
+    n.quotes.length ? h('div', {class:'blk'}, h('h4', {}, '葉 · 大家講過'), h('ul', {class:'quotes'}, n.quotes.map(q => h('li', {}, '「' + q + '」')))) : null,
+    n.discovery ? h('div', {class:'blk'}, h('h4', {}, '花 · 新發現'), h('p', {}, n.discovery)) : null,
+    n.disagreement ? h('div', {class:'blk'}, h('h4', {}, '仍有分歧'), h('p', {}, n.disagreement)) : null,
+    n.buds.length ? h('div', {class:'blk'}, h('h4', {}, '花蕾 · 未探索嘅問題'), h('ul', {class:'buds'}, n.buds.map(b => h('li', {},
+      h('span', {}, b), h('button', {class:'btn small sky', type:'button', onclick:() => startFromBud(b)}, '搵人傾呢個'))))) : null].filter(Boolean));
+}
+function renderOverview(){
+  const ov = shown().overview || {common:[], disagreements:[]};
+  $('#overview').replaceChildren(
+    h('div', {class:'ov'}, h('h4', {}, '共同點'), ov.common.length ? h('ul', {}, ov.common.map(c => h('li', {}, c))) : h('p', {class:'muted'}, '未有。')),
+    h('div', {class:'ov'}, h('h4', {}, '分歧點'), ov.disagreements.length ? h('ul', {}, ov.disagreements.map(d => h('li', {}, d.type ? h('span', {class:'dtype'}, d.type) : null, d.text))) : h('p', {class:'muted'}, '未有。')));
+}
+function renderRings(){
+  const box = $('#ringChips');
+  box.replaceChildren(...rings.map((r, i) => h('button', {class:'ghost', type:'button', 'aria-pressed':viewing === i, onclick:() => { viewing = i; renderAll(); }}, `第 ${i + 1} 圈`)),
+    h('button', {class:'ghost', type:'button', 'aria-pressed':viewing < 0, onclick:() => { viewing = -1; renderAll(); }}, '而家'));
+}
+function renderAll(){
+  if (selected && !shown().nodes.some(n => n.id === selected)) selected = null;
+  renderTree(); renderList(); renderCard(); renderOverview(); renderRings(); renderTalk(); renderRole();
+}
+
+/* ---------- controls & start ---------- */
+function fillSelect(id, obj, value){ const el = $(id); for (const [k, v] of Object.entries(obj)) el.append(h('option', {value:k}, typeof v === 'string' ? v : v.name)); el.value = value; }
+fillSelect('#langA', LANGS, people.A.lang); fillSelect('#langB', LANGS, people.B.lang); fillSelect('#langC', LANGS, '');
+fillSelect('#gestA', GESTURES, people.A.gesture); fillSelect('#gestB', GESTURES, people.B.gesture);
+for (const p of ['A','B']){
+  $('#lang' + p).onchange = e => sendWS({type:'person', seat:p, lang:e.target.value});
+  $('#gest' + p).onchange = e => { animate(p, 'g-' + e.target.value); sendWS({type:'person', seat:p, gesture:e.target.value}); };
+  $('#turn' + p).onclick = () => sendWS({type:'seat', seat:p});
+}
+$('#langC').onchange = e => { audLang = e.target.value; sendWS({type:'audLang', lang:audLang}); renderAudience(); };
+$('#copyLink').onclick = async () => {
+  const btn = $('#copyLink');
+  try { await navigator.clipboard.writeText(location.href); btn.textContent = '已複製'; }
+  catch { msg('請手動複製呢條連結：' + location.href); }
+  setTimeout(() => { btn.textContent = '複製邀請連結'; }, 2000);
+};
+setView('tree');
+renderAll();
+connect();
+</script>
+</body>
+</html>

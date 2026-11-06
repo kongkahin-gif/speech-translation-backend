@@ -483,7 +483,7 @@ async function send(text, viaVoice){
     if (res.attack && res.suggestion){ pending = {who, src, text, res}; showCivility(); renderBubbles(); sendWS({type:'status', seat:who, status:'idle'}); }
     else commit(who, src, text, res);
     micNote(`由放手到翻譯好：${((performance.now() - t0) / 1000).toFixed(1)} 秒`);
-  } catch (e){ msg(errCopy(e)); renderBubbles(); sendWS({type:'status', seat:who, status:'idle'}); }
+  } catch (e){ const m = errCopy(e); msg(m); micNote(m); bubbleNote(who, '翻譯唔到', m); sendWS({type:'status', seat:who, status:'idle'}); }
   finally { busy = false; setControls(); }
 }
 function commit(who, src, text, res){
@@ -533,14 +533,17 @@ function speculate(){
   }, 600);
 }
 function cloudBubble(who){ const el = $('#bubble' + who); el.classList.add('recording'); el.innerHTML = CLOUD; }
-function micFail(t){
-  micError = t; micNote(t);
-  const el = $('#bubble' + mySeat); el.classList.remove('recording');
-  el.replaceChildren(h('span', {class:'bub-label'}, '錄唔到音'), h('span', {}, t));
-  sendWS({type:'status', seat:mySeat, status:'idle'});
+function bubbleNote(who, label, t){
+  const el = $('#bubble' + who); el.classList.remove('recording');
+  el.replaceChildren(h('span', {class:'bub-label'}, label), h('span', {}, t));
 }
+function micFail(t){ micError = t; micNote(t); bubbleNote(mySeat, '錄唔到音', t); sendWS({type:'status', seat:mySeat, status:'idle'}); }
 function startListening(){
-  if (busy || listening || pending || !isSpeaker() || !connected) return;
+  if (!connected) return micNote('連接緊伺服器，請等一陣。');
+  if (!isSpeaker()) return micNote('觀眾唔可以講嘢，只可以聽。');
+  if (busy) return micNote('翻譯緊上一句，請等一陣。');
+  if (pending) return micNote('請先揀點樣處理上一句。');
+  if (listening) return;
   listening = true; micError = ''; heard = ''; rec = null; spec = null; clearTimeout(specTimer);
   animate(mySeat, 'g-' + people[mySeat].gesture); setTalking(true); micNote(''); cloudBubble(mySeat);
   sendWS({type:'status', seat:mySeat, status:'recording'});
@@ -571,7 +574,7 @@ function finishListening(){
 }
 /* hold = talk while held, deliver on release; quick tap = start, tap again to deliver */
 function pressDown(){
-  if (listening){ if (latched) stopListening(); return; }
+  if (listening) return stopListening(); // a press while recording always delivers, even if the last release was missed
   pressAt = performance.now(); latched = false; startListening();
 }
 function pressUp(){
@@ -589,7 +592,7 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => { if (e.code === 'Space' && !isTyping(e.target)){ e.preventDefault(); pressUp(); } });
 const mic = $('#micBtn');
-mic.addEventListener('pointerdown', e => { e.preventDefault(); pressDown(); });
+mic.addEventListener('pointerdown', e => { e.preventDefault(); mic.setPointerCapture(e.pointerId); pressDown(); });
 ['pointerup','pointercancel'].forEach(t => mic.addEventListener(t, pressUp));
 $('#typeForm').addEventListener('submit', e => { e.preventDefault(); send($('#typeIn').value); });
 

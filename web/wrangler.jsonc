@@ -1,5 +1,5 @@
 {
-  // HarmonyVoice: static page + API + one Durable Object per conversation room
+  // HarmonyVoice: static site + API + Durable Objects (rooms, lobby, accounts)
   "name": "harmonyvoice",
   "main": "src/worker.js",
   "compatibility_date": "2026-10-01",
@@ -8,8 +8,17 @@
     "run_worker_first": ["/api/*"]
   },
   "durable_objects": {
-    "bindings": [{ "name": "ROOM", "class_name": "Room" }]
+    "bindings": [
+      { "name": "ROOM", "class_name": "Room" },
+      { "name": "LOBBY", "class_name": "Lobby" },
+      { "name": "USER", "class_name": "User" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
-  // Secret (set in the Cloudflare dashboard, never in this file): GEMINI_API_KEY
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room"] },
+    { "tag": "v2", "new_sqlite_classes": ["Lobby", "User"] }
+  ]
+  // Secrets (set in the Cloudflare dashboard, never in this file):
+  //   GEMINI_API_KEY    - required, for translation and the argument tree
+  //   GOOGLE_CLIENT_ID  - optional, turns on "Sign in with Google"
 }

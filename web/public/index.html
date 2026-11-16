@@ -259,6 +259,8 @@ button.av{border:0;background:none;padding:0;cursor:pointer;border-radius:20px}
 .newroom .type{flex-wrap:wrap}
 .newroom .type input{flex:1 1 220px}
 .sect{font:600 18px/1.3 var(--display)}
+.ratebox{border:2px solid var(--line);border-radius:16px;padding:12px 14px;background:var(--sunk);display:flex;flex-direction:column;gap:8px}
+.ratebox label{display:flex;gap:8px;align-items:center;font-weight:700}
 
 /* ---- dialogs (profile, account) ---- */
 .modal{position:fixed;inset:0;z-index:40;background:var(--scrim);display:grid;place-items:start center;overflow:auto;
@@ -316,8 +318,10 @@ button.av{border:0;background:none;padding:0;cursor:pointer;border-radius:20px}
     <div class="row"><button id="matchBtn" class="btn pink" type="button">隨機配對</button></div>
   </div>
   <div class="themes" id="themeBar" role="group" aria-label="題目類別"></div>
-  <h2 class="sect">而家開緊嘅房</h2>
+  <div id="hotBox" hidden><h2 class="sect">今日熱話</h2><p class="note small">每日由當日新聞整理出嚟嘅中性問題。有人等緊同一題，就會直接帶你入去。</p><div class="cards" id="hotCards" style="margin-top:10px"></div></div>
+  <h2 class="sect">為你推薦嘅房</h2>
   <div class="cards" id="roomCards"></div>
+  <div id="myBox" hidden><h2 class="sect">你去過嘅樹</h2><div class="cards" id="myCards" style="margin-top:10px"></div></div>
   <h2 class="sect">開一間新房</h2>
   <div class="newroom">
     <form id="newRoomForm" class="type">
@@ -396,6 +400,7 @@ button.av{border:0;background:none;padding:0;cursor:pointer;border-radius:20px}
     <div class="opts"><label><input type="checkbox" id="ttsOn" checked> 讀出翻譯</label></div>
     <h2 class="sub">對話記錄</h2>
     <ol id="transcript" class="transcript"></ol>
+    <button id="endBtn" class="btn sky grow" type="button">總結今場對話（同意乜、分歧乜）</button>
     <button id="growBtn" class="btn pink grow" type="button">結束對話，種入論點樹</button>
     <p id="stageMsg" class="note small" role="status"></p>
   </section>
@@ -447,13 +452,30 @@ button.av{border:0;background:none;padding:0;cursor:pointer;border-radius:20px}
           <label>打招呼動作<select id="profGest"></select></label>
         </div>
         <p class="note small" id="profPet"></p>
+        <p class="note small" id="profStats"></p>
       </div>
     </div>
     <div><h3 class="sub">你嚟自邊度？</h3><p class="note small">每個地方有一隻代表動物同一套傳統服裝。唔想講可以揀「世界公民」。論點樹上面永遠唔會顯示呢項。</p></div>
     <div class="picks" id="culturePicks"></div>
+    <div><h3 class="sub">你想傾邊類題目？</h3><p class="note small">可以揀幾個。大堂會將呢啲類別嘅房同題目排前啲。</p></div>
+    <div class="themes" id="likePicks" style="flex-wrap:wrap;overflow:visible"></div>
     <div><h3 class="sub">衣櫃</h3><p class="note small">同其他文化嘅人傾滿 3 句，就會收到佢哋嘅服裝做禮物。</p></div>
     <div class="picks" id="outfitPicks"></div>
     <button id="profDone" class="btn pink" type="button" style="align-self:flex-start">入大堂</button>
+  </div>
+</div>
+
+<div id="summary" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="sumTitle">
+  <div class="sheet" style="max-width:640px">
+    <div><p class="eyebrow">今場對話總結</p><h2 id="sumTitle"><span id="sumTopic"></span></h2></div>
+    <div class="overview" id="sumBody"></div>
+    <div id="sumPair" class="ratebox">
+      <div class="row"><button id="likeBtn" class="btn small pink" type="button">❤ 送個讚</button></div>
+      <label><input type="checkbox" id="rateU"> 我聽明咗對方嘅意思</label>
+      <label><input type="checkbox" id="rateL"> 我學到新嘢</label>
+      <p class="note small">雙方都剔同一項，先算搭到一道橋。對方只會知道有冇搭到橋，唔會見到你剔咗乜。</p>
+    </div>
+    <button id="sumClose" class="btn sky" type="button" style="align-self:flex-start">完成</button>
   </div>
 </div>
 

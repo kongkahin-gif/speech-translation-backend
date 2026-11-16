@@ -42,7 +42,7 @@ let busy = false, timerLeft = 300, timerId = null, pending = null, listening = f
 let ws = null, connected = false, retry = 0, myId = null, mySeat = null, members = [], audLang = '';
 let roomId = null, roomRole = '', roomCreate = null, screen = 'splash';
 let profile = store.get('hv-profile', null), auth = store.get('hv-auth', null), account = null, config = {};
-let lobbyWS = null, lobby = {rooms:[], online:0}, themeFilter = '';
+let lobbyWS = null, lobby = {rooms:[], online:0, hot:[], bridged:[]}, themeFilter = '';
 const people = {A:{lang:'yue', gesture:'wave'}, B:{lang:'en', gesture:'bow'}};
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const shown = () => viewing < 0 ? tree : rings[viewing].tree;
@@ -51,7 +51,7 @@ const isSpeaker = () => mySeat === 'A' || mySeat === 'B';
 const holder = seat => members.find(m => m.seat === seat);
 const heldByOther = seat => members.some(m => m.seat === seat && m.id !== myId);
 const otherSeat = seat => seat === 'A' ? 'B' : 'A';
-const modalOpen = () => !$('#profile').hidden || !$('#account').hidden || !$('#interlude').hidden;
+const modalOpen = () => !$('#profile').hidden || !$('#account').hidden || !$('#interlude').hidden || !$('#summary').hidden;
 
 /* ---------- opening / loading card with a saying about peace ---------- */
 let quoteTimer = null;
@@ -70,7 +70,7 @@ function hideInterlude(){ clearInterval(quoteTimer); $('#interlude').hidden = tr
 /* ---------- character (profile, culture, wardrobe) ---------- */
 const owned = () => new Set(['plain', 'olive', CULTURES[profile.culture].outfit, ...profile.unlocked]);
 function newProfile(name){
-  return {name:name || '', culture:'world', outfit:'olive', lang:'yue', gesture:'wave', unlocked:[], stats:{said:0, heard:0, trees:0, met:[], heardFrom:{}}};
+  return {name:name || '', culture:'world', outfit:'olive', lang:'yue', gesture:'wave', unlocked:[], likes:[], stats:{said:0, heard:0, trees:0, bridges:0, hearts:0, met:[], heardFrom:{}, themes:{}}};
 }
 let saveTimer = 0;
 function saveProfile(){
@@ -113,6 +113,11 @@ function renderProfile(){
       if (!profile.touchedLang){ profile.lang = v.lang; $('#profLang').value = v.lang; }
       renderProfile();
     }}, mini({culture:k, outfit:v.outfit}), v.name, h('small', {}, v.pet))));
+  const st = profile.stats;
+  $('#profStats').textContent = `你嘅貢獻：講咗 ${st.said} 句 · 聽咗 ${st.heard} 句 · 種樹 ${st.trees} 次 · 搭橋 ${st.bridges} 道 · 收到 ${st.hearts} 個讚 · 識咗 ${st.met.length} 個文化`;
+  $('#likePicks').replaceChildren(...Object.entries(THEMES).map(([k, t]) => h('button', {type:'button', 'aria-pressed':profile.likes.includes(k), onclick:() => {
+    profile.likes = profile.likes.includes(k) ? profile.likes.filter(x => x !== k) : [...profile.likes, k]; renderProfile();
+  }}, t.name)));
   $('#outfitPicks').replaceChildren(...Object.entries(OUTFITS).map(([k, o]) => {
     const ok = have.has(k);
     return h('button', {class:'pick' + (ok ? '' : ' locked'), type:'button', 'aria-pressed':profile.outfit === k, 'aria-disabled':!ok,
@@ -134,6 +139,7 @@ function closeProfile(){
   if (!name){ $('#profName').focus(); return toast('請先打個名（花名都得）。'); }
   profile.name = name; profile.gesture = $('#profGest').value;
   $('#profile').hidden = true; saveProfile();
+  if (screen === 'lobby') renderLobby(); // interests change what is recommended
   if (screen === 'splash') afterProfile();
   if (roomId && isSpeaker()) sendWS({type:'person', seat:mySeat, lang:profile.lang, gesture:profile.gesture});
 }
@@ -158,7 +164,7 @@ async function signIn(credential){
       // same person on a new device: keep everything either side has earned
       const mine = profile || newProfile(), st = r.profile.stats;
       profile = {...mine, ...r.profile, unlocked:[...new Set([...mine.unlocked, ...r.profile.unlocked])],
-        stats:{said:Math.max(mine.stats.said, st.said), heard:Math.max(mine.stats.heard, st.heard), trees:Math.max(mine.stats.trees, st.trees),
+        stats:{bridges:Math.max(mine.stats.bridges, st.bridges || 0), hearts:Math.max(mine.stats.hearts, st.hearts || 0), themes:{...mine.stats.themes, ...st.themes}, said:Math.max(mine.stats.said, st.said), heard:Math.max(mine.stats.heard, st.heard), trees:Math.max(mine.stats.trees, st.trees),
           met:[...new Set([...mine.stats.met, ...st.met])], heardFrom:{...mine.stats.heardFrom, ...st.heardFrom}}};
     } else if (!profile) profile = newProfile(r.name);
     saveProfile(); acctMsg('已登入，你嘅角色會自動儲存。');
@@ -230,7 +236,7 @@ function connectLobby(){
   if (lobbyWS || screen !== 'lobby') return;
   const sock = lobbyWS = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/lobby');
   sock.onopen = renderConn;
-  sock.onmessage = e => { lobby = JSON.parse(e.data); renderLobby(); renderConn(); };
+  sock.onmessage = e => { lobby = {hot:[], bridged:[], ...JSON.parse(e.data)}; renderLobby(); renderConn(); };
   sock.onclose = () => { if (lobbyWS === sock){ lobbyWS = null; renderConn(); setTimeout(connectLobby, 2500); } };
 }
 function leaveLobby(){ if (lobbyWS){ const sock = lobbyWS; lobbyWS = null; sock.close(); } }
@@ -238,22 +244,66 @@ function seatMini(card){
   return card ? h('div', {style:'text-align:center'}, h('span', {class:'mini', html:avatarSVG(look(card))}), h('div', {class:'live', style:'position:static;display:inline-block'}, `${card.name} · ${(LANGS[card.lang] || {}).name || ''}`))
     : h('div', {style:'text-align:center'}, h('span', {class:'mini', html:avatarSVG({animal:'bear', empty:true})}), h('div', {class:'live', style:'position:static;display:inline-block'}, '空位'));
 }
+/* What to show first. Scored on: someone is waiting, a friend is there, they differ from me in language or culture,
+   the themes I said I like, themes I have not tried, and topics where people built a bridge. Never on popularity or heat. */
+function recommend(r){
+  const why = [], other = r.A || r.B, friends = account ? account.friends : {};
+  let score = 0;
+  const add = (n, t) => { score += n; why.push(t); };
+  if (!r.A || !r.B) add(3, '等緊對手');
+  if ((r.uids || []).some(u => friends[u])) add(4, '好友喺度');
+  if (other && other.lang !== profile.lang) add(2, '唔同語言');
+  if (other && other.culture !== profile.culture) add(2, '唔同文化');
+  if (profile.likes.includes(r.theme)) add(2, '你鍾意嘅類別');
+  else if (!profile.stats.themes[r.theme]) add(1, '你未試過嘅類別');
+  const br = lobby.bridged.find(x => x.topic === r.topic);
+  if (br) add(Math.min(3, br.score), '有人喺呢題搭到橋');
+  return {score, why};
+}
+const liked = k => profile.likes.includes(k) ? 0 : 1;
+const waitingFor = topic => lobby.rooms.find(r => r.topic === topic && (!r.A || !r.B));
+// a topic card joins the person already waiting on that question, so people gather instead of scattering
+function openTopic(topic, k){ const r = waitingFor(topic); if (r) enterRoom(r.id); else createRoom(topic, k); }
+function topicCard(k, q, tag, why){
+  return h('article', {class:'rcard'}, h('div', {class:'thumb', html:sceneSVG(k)}, tag ? h('span', {class:'live'}, tag) : null),
+    h('div', {class:'info'}, h('p', {class:'eyebrow'}, (THEMES[k] || {name:'自由傾'}).name), h('h3', {}, q), why ? h('p', {class:'note small'}, why) : null,
+      h('div', {class:'row'}, h('button', {class:'btn small sky', type:'button', onclick:() => openTopic(q, k)}, waitingFor(q) ? '加入等緊嘅人' : '開房傾呢個'))));
+}
 function renderLobby(){
   $('#themeBar').replaceChildren(h('button', {type:'button', 'aria-pressed':!themeFilter, onclick:() => { themeFilter = ''; renderLobby(); }}, '全部'),
     ...Object.entries(THEMES).map(([k, t]) => h('button', {type:'button', 'aria-pressed':themeFilter === k, onclick:() => { themeFilter = k; renderLobby(); }}, t.name)));
-  const rooms = lobby.rooms.filter(r => !themeFilter || r.theme === themeFilter).sort((a, b) => (!!a.A + !!a.B) - (!!b.A + !!b.B));
-  $('#roomCards').replaceChildren(...(rooms.length ? rooms.map(r => {
+  const pick = x => !themeFilter || x.theme === themeFilter;
+  const hot = lobby.hot.filter(pick).sort((a, b) => liked(a.theme) - liked(b.theme));
+  $('#hotBox').hidden = !hot.length;
+  $('#hotCards').replaceChildren(...hot.map(x => topicCard(x.theme, x.q, '今日熱話', x.why)));
+  const rooms = lobby.rooms.filter(pick).map(r => ({r, ...recommend(r)})).sort((a, b) => b.score - a.score);
+  $('#roomCards').replaceChildren(...(rooms.length ? rooms.map(({r, why}) => {
     const free = !r.A || !r.B;
     return h('article', {class:'rcard'},
       h('div', {class:'thumb', html:sceneSVG(r.theme)}, h('span', {class:'live', style:'left:50%;transform:translateX(-50%)'}, free ? '等緊對手' : '傾緊'), h('div', {class:'seats'}, seatMini(r.A), seatMini(r.B))),
       h('div', {class:'info'}, h('p', {class:'eyebrow'}, (THEMES[r.theme] || {name:'自由傾'}).name + (r.watchers ? ` · ${r.watchers} 人旁聽` : '')), h('h3', {}, r.topic),
+        why.length ? h('p', {class:'note small'}, '推薦原因：' + why.join(' · ')) : null,
         h('div', {class:'row'}, free ? h('button', {class:'btn small pink', type:'button', onclick:() => enterRoom(r.id)}, '加入對話') : null,
           h('button', {class:'btn small', type:'button', onclick:() => enterRoom(r.id, {role:'watch'})}, '旁聽'))));
   }) : [h('p', {class:'note'}, themeFilter ? '呢個類別暫時冇人開房。你可以喺下面開第一間。' : '而家未有公開嘅房。喺下面揀個題目開第一間，或者撳「隨機配對」。')]));
-  const ideas = Object.entries(THEMES).filter(([k]) => !themeFilter || k === themeFilter).flatMap(([k, t]) => (themeFilter ? t.q : t.q.slice(0, 1)).map(q => [k, q]));
-  $('#ideaCards').replaceChildren(...ideas.map(([k, q]) => h('article', {class:'rcard'}, h('div', {class:'thumb', html:sceneSVG(k)}),
-    h('div', {class:'info'}, h('p', {class:'eyebrow'}, THEMES[k].name), h('h3', {}, q),
-      h('div', {class:'row'}, h('button', {class:'btn small sky', type:'button', onclick:() => createRoom(q, k)}, '開呢個題目'))))));
+  // topic ideas: where bridges were built first, then starters, with the themes I like ahead of the rest
+  const starters = Object.entries(THEMES).filter(([k]) => !themeFilter || k === themeFilter).sort((a, b) => liked(a[0]) - liked(b[0]))
+    .flatMap(([k, t]) => t.q.slice(0, themeFilter ? 3 : liked(k) ? 1 : 2).map(q => [k, q, '']));
+  const ideas = [...lobby.bridged.filter(pick).map(x => [x.theme, x.topic, '🌉 有人搭到橋']), ...starters].filter(([, q], i, all) => all.findIndex(y => y[1] === q) === i && !hot.some(x => x.q === q));
+  $('#ideaCards').replaceChildren(...ideas.map(([k, q, tag]) => topicCard(k, q, tag)));
+}
+/* trees I took part in: a reason to come back is seeing that one has grown */
+let myRooms = store.get('hv-rooms', []);
+function renderMyTrees(){
+  $('#myBox').hidden = !myRooms.length;
+  $('#myCards').replaceChildren(...myRooms.map(r => h('article', {class:'rcard'},
+    h('div', {class:'thumb', html:sceneSVG(r.theme)}, r.now > r.v ? h('span', {class:'live'}, '🌱 長咗新枝') : r.n ? h('span', {class:'live'}, `${r.n} 人喺度`) : null),
+    h('div', {class:'info'}, h('p', {class:'eyebrow'}, (THEMES[r.theme] || {name:'自由傾'}).name), h('h3', {}, r.topic),
+      h('div', {class:'row'}, h('button', {class:'btn small', type:'button', onclick:() => enterRoom(r.id)}, '返去睇'))))));
+}
+function showLobby(){
+  go('lobby'); connectLobby(); renderLobby(); renderMyTrees();
+  for (const r of myRooms) fetch('/api/room/' + r.id).then(x => x.json()).then(d => { r.now = d.treeVersion; r.n = d.n; renderMyTrees(); }).catch(() => {});
 }
 const newId = () => Math.random().toString(36).slice(2, 10);
 function createRoom(topic, themeKey){ enterRoom(newId(), {create:{topic, theme:themeKey || '', open:$('#newOpen').checked}}); }
@@ -295,7 +345,7 @@ function resetRoom(){
 function leaveRoom(push){
   resetRoom(); roomId = null; hideInterlude();
   if (push) history.pushState(null, '', location.pathname);
-  go('lobby'); connectLobby(); renderLobby();
+  showLobby();
 }
 $('#backLobby').onclick = () => leaveRoom(true);
 $('#homeLink').onclick = e => { e.preventDefault(); if (screen === 'room') leaveRoom(true); };
@@ -333,6 +383,14 @@ function onMessage(m){
   else if (m.type === 'poke'){ toast(`${m.name} 想加你做好友。撳「好友同帳戶」睇下。`); refreshAccount(); }
   else if (m.type === 'growing') showInterlude('AI 整理緊論點，通常要半分鐘至一分鐘', {text:'收埋，喺背後繼續', go:hideInterlude});
   else if (m.type === 'growError'){ hideInterlude(); msg(errCopy({code:m.code})); }
+  else if (m.type === 'summing') showInterlude('AI 整理緊今場對話嘅共同點同分歧');
+  else if (m.type === 'summary'){ hideInterlude(); showSummary(m.sum); }
+  else if (m.type === 'sumError'){ hideInterlude(); msg(errCopy({code:m.code})); }
+  else if (m.type === 'bridge'){
+    toast(m.score > 1 ? '🌉 你哋搭咗一道橋：雙方都聽明對方，亦都學到新嘢。' : '🌉 你哋搭咗一道橋：雙方有同感。');
+    if (isSpeaker()){ profile.stats.bridges++; saveProfile(); }
+  }
+  else if (m.type === 'liked'){ toast(`❤ ${m.name} 送咗個讚俾你。`); profile.stats.hearts++; saveProfile(); }
 }
 function applyState(st){
   const first = treeVersion < 0, newTree = st.treeVersion !== treeVersion, grown = newTree && treeVersion >= 0 && st.tree.changes && st.tree.changes.length;
@@ -348,6 +406,10 @@ function applyState(st){
     } else if (!tree.nodes.some(n => n.id === selected)) selected = (tree.nodes[1] || tree.nodes[0] || {}).id || null;
   }
   if (!turns.length) resetTimer();
+  if (st.made){ // remember this tree so the lobby can show me when it grows
+    myRooms = [{id:roomId, topic:tree.topic, theme, v:treeVersion}, ...myRooms.filter(x => x.id !== roomId)].slice(0, 6);
+    store.set('hv-rooms', myRooms);
+  }
   renderAll();
 }
 function onTurn(t){
@@ -369,7 +431,7 @@ function onTurn(t){
 function reward(t){
   if (!isSpeaker()) return;
   const st = profile.stats;
-  if (t.who === mySeat) st.said++;
+  if (t.who === mySeat){ st.said++; st.themes[theme] = (st.themes[theme] || 0) + 1; }
   else {
     st.heard++;
     const from = holder(t.who), c = from && from.p.culture;
@@ -458,6 +520,28 @@ function speak(text, lang, who){
   } catch {}
 }
 function showCivility(){ $('#suggText').textContent = '建議講法：' + pending.res.suggestion; $('#civility').hidden = false; }
+/* closing summary: what we agree on, where we still differ (and that is fine), then a like and an honest check-in */
+function showSummary(sum){
+  const mine = sum[mySeat === 'C' ? audLang : people[mySeat].lang] || Object.values(sum)[0] || {common:[], differ:[]};
+  const list = (items, none) => items.length ? h('ul', {}, items.map(x => h('li', {dir:'auto'}, x))) : h('p', {class:'muted'}, none);
+  $('#sumTopic').textContent = convTopic;
+  $('#sumBody').replaceChildren(
+    h('div', {class:'ov'}, h('h4', {}, '我哋同意'), list(mine.common, '今次未搵到明確嘅共同點。')),
+    h('div', {class:'ov'}, h('h4', {}, '仍然睇法唔同（咁都得）'), list(mine.differ, '今次冇明顯分歧。')));
+  const partner = isSpeaker() && members.find(m => m.seat === otherSeat(mySeat) && m.id !== myId);
+  $('#sumPair').hidden = !partner;
+  if (partner){
+    const btn = $('#likeBtn'); btn.disabled = false; btn.textContent = `❤ 送個讚俾 ${partner.p.name}`;
+    $('#rateU').checked = $('#rateL').checked = false;
+  }
+  $('#summary').hidden = false;
+}
+$('#endBtn').onclick = () => { if (!turns.length){ msg('未有對話可以總結。'); return; } msg(''); sendWS({type:'end'}); };
+$('#likeBtn').onclick = () => { sendWS({type:'like'}); $('#likeBtn').disabled = true; $('#likeBtn').textContent = '已送出 ❤'; };
+$('#sumClose').onclick = () => {
+  if (!$('#sumPair').hidden) sendWS({type:'rate', understood:$('#rateU').checked, learned:$('#rateL').checked});
+  $('#summary').hidden = true;
+};
 $('#useSugg').onclick = () => { const t = pending.res.suggestion; pending = null; $('#civility').hidden = true; send(t); };
 $('#sendAnyway').onclick = () => { const p = pending; commit(p.who, p.src, p.text, p.res); };
 $('#cancelSugg').onclick = () => { pending = null; $('#civility').hidden = true; };
@@ -846,7 +930,7 @@ function afterProfile(){
   const id = new URLSearchParams(location.search).get('room');
   if (id && /^[A-Za-z0-9_-]{1,40}$/.test(id)) return enterRoom(id);
   if (id) history.replaceState(null, '', location.pathname);
-  go('lobby'); connectLobby(); renderLobby();
+  showLobby();
 }
 function begin(){
   hideInterlude();

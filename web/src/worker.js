@@ -265,6 +265,19 @@ function cleanTurn(t) {
   return text ? { who: t.who, lang: t.lang, text, tr: pick(t.tr, 3000), tone: pick(t.tone, 60) } : null;
 }
 
+/* ---------- end-of-conversation summary ---------- */
+const summaryPrompt = (st, langs) => `Two people (A and B) just finished a calm cross-language discussion. Summarise it fairly for both of them.
+Topic: ${st.convTopic}
+Conversation (speaker: original words):
+${st.turns.map(t => `${t.who}: ${t.text}`).join('\n')}
+
+Write:
+- "common": up to 3 points that both actually expressed or accepted. Only what the conversation supports; an empty list if there are none.
+- "differ": up to 3 points where they still see it differently. Name both views neutrally, so each person would say "yes, that is my view". Never judge who is right.
+Each point is one short sentence. Give both lists in each of these languages, keyed by code: ${langs.map(c => `${c} = ${LANGS[c]}`).join('; ')}.
+Reply with only JSON: {"<code>": {"common": ["..."], "differ": ["..."]}}`;
+const cleanSummary = (raw, langs) => Object.fromEntries(langs.map(c => [c, { common: arr(raw?.[c]?.common).slice(0, 3).map(x => str(x, 240)), differ: arr(raw?.[c]?.differ).slice(0, 3).map(x => str(x, 240)) }]));
+
 /* ---------- conversation room ---------- */
 const REACTIONS = ['👍', '❤️', '👏', '🤔', '🙏', '🌱'];
 const cleanCard = p => ({ name: str(p?.name, 20).trim() || '朋友', culture: code(p?.culture, 8) || 'world', outfit: code(p?.outfit) || 'plain' });
@@ -300,7 +313,8 @@ export class Room extends DurableObject {
   }
 
   async fetch(request) {
-    if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected WebSocket', { status: 426 });
+    // a plain GET is a peek: lets a returning visitor see whether a tree they helped grow has grown since
+    if (request.headers.get('Upgrade') !== 'websocket') return json({ topic: this.state.tree.topic, theme: this.state.theme, treeVersion: this.state.treeVersion, n: this.members().length });
     const [client, server] = Object.values(new WebSocketPair());
     const taken = this.members().map(m => m.seat), watch = new URL(request.url).searchParams.get('role') === 'watch';
     const me = { id: crypto.randomUUID(), seat: (!watch && SEATS.find(s => !taken.includes(s))) || 'C', lang: '', uid: request.headers.get('x-uid') || '', p: cleanCard() };
@@ -331,7 +345,7 @@ export class Room extends DurableObject {
       // the first visitor of a brand-new room sets its topic and whether the lobby lists it
       const topic = str(m.topic, 200).trim();
       if (st.made || st.turns.length || !topic) return;
-      st.made = true; st.open = m.open === true; st.tree = emptyTree(topic); st.convTopic = topic;
+      st.made = true; st.open = m.open === true; st.tree = emptyTree(topic); st.convTopic = topic; st.rates = {};
       st.theme = THEMES[m.theme] ? m.theme : await themeOf(this.env, topic);
       await push(); this.roster();
     } else if (m.type === 'seat' && ['A', 'B', 'C'].includes(m.seat)) {
@@ -348,8 +362,35 @@ export class Room extends DurableObject {
       await push(); this.roster();
     } else if (m.type === 'status' && SEATS.includes(m.seat)) {
       this.broadcast({ type: 'status', seat: m.seat, status: str(m.status, 20) }, ws);
+    } else if (m.type === 'rate' && SEATS.includes(me.seat)) {
+      // each speaker says whether they understood the other and learned something; only when both do is it a "bridge"
+      st.rates = { ...st.rates, [me.seat]: { id: me.id, u: m.understood === true, l: m.learned === true } };
+      const { A, B } = st.rates;
+      if (A && B && A.id !== B.id) {
+        const score = (A.u && B.u ? 1 : 0) + (A.l && B.l ? 1 : 0);
+        st.rates = {};
+        if (score) {
+          this.broadcast({ type: 'bridge', score });
+          this.ctx.waitUntil(post(lobbyOf(this.env), '/bridge', { topic: st.convTopic, theme: st.theme, score }).catch(() => {}));
+        }
+      }
+      await this.save();
     } else if (m.type === 'react' && REACTIONS.includes(m.e)) {
       this.broadcast({ type: 'react', seat: me.seat, e: m.e });
+    } else if (m.type === 'end') {
+      // anyone in the room can ask for the closing summary; everyone sees it in the language they use
+      if (this.summing || !st.turns.length) return;
+      this.summing = true; this.broadcast({ type: 'summing' });
+      const langs = [...new Set([st.people.A.lang, st.people.B.lang, ...this.members().map(x => x.lang).filter(Boolean)])];
+      try {
+        const sum = cleanSummary(await gemini(this.env, summaryPrompt(st, langs), true), langs);
+        st.rates = {}; await this.save();
+        this.broadcast({ type: 'summary', sum });
+      } catch (e) { this.broadcast({ type: 'sumError', code: e.code || 'server_error' }); }
+      finally { this.summing = false; }
+    } else if (m.type === 'like' && SEATS.includes(me.seat)) {
+      const to = me.seat === 'A' ? 'B' : 'A';
+      for (const s of this.ctx.getWebSockets()) if (s !== ws && s.deserializeAttachment()?.seat === to) { try { s.send(JSON.stringify({ type: 'liked', name: me.p.name })); } catch {} }
     } else if (m.type === 'poke') {
       // nudge a signed-in member to re-read their friend requests
       for (const s of this.ctx.getWebSockets()) if (s !== ws && s.deserializeAttachment()?.uid === m.uid) { try { s.send(JSON.stringify({ type: 'poke', name: me.p.name })); } catch {} }
@@ -358,11 +399,11 @@ export class Room extends DurableObject {
       st.turns.push(t); if (st.turns.length > MAX_TURNS) st.turns.shift();
       await this.save(); this.broadcast({ type: 'turn', turn: t });
     } else if (m.type === 'topic') {
-      st.convTopic = str(m.convTopic, 200).trim() || st.tree.topic; st.turns = [];
+      st.convTopic = str(m.convTopic, 200).trim() || st.tree.topic; st.turns = []; st.rates = {};
       await push(); this.roster();
     } else if (m.type === 'newTree') {
       const topic = str(m.topic, 200).trim(); if (!topic) return;
-      this.pushRing(); st.tree = emptyTree(topic); st.convTopic = topic; st.turns = []; st.treeVersion++; st.made = true;
+      this.pushRing(); st.tree = emptyTree(topic); st.convTopic = topic; st.turns = []; st.treeVersion++; st.made = true; st.rates = {};
       st.theme = THEMES[m.theme] ? m.theme : await themeOf(this.env, topic);
       await push(); this.roster();
     } else if (m.type === 'grow') {
@@ -385,14 +426,53 @@ export class Room extends DurableObject {
 }
 
 /* ---------- lobby: who is online and which public rooms are open ---------- */
+const NEWS_URL = 'https://en.wikipedia.org/w/api.php?action=parse&page=Portal:Current_events&prop=text&format=json&formatversion=2';
+const hotPrompt = news => `You suggest today's discussion topics for HarmonyVoice, a platform where people from different cultures talk calmly to understand each other.
+
+From the news digest below, write up to 6 discussion questions, each for a different category.
+Rules:
+- Each question is open and neutral: a thoughtful person on either side would find the wording fair. No loaded words, no naming who is right.
+- Ask about the underlying choice or value that ordinary people anywhere can speak to from their own life, not about who will win or what will happen.
+- Skip disasters, deaths, crimes, trials and anything that needs specialist facts to discuss.
+- Write "q" (at most 30 characters) and "why" (one short sentence on why it is in the news now, facts only) in Traditional Chinese as used in Hong Kong.
+- "theme" is one of: ${Object.keys(THEMES).join(', ')}.
+
+News digest:
+${news}
+
+Reply with only JSON: {"items": [{"theme": "...", "q": "...", "why": "..."}]}`;
 export class Lobby extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    ctx.blockConcurrencyWhile(async () => { this.rooms = (await ctx.storage.get('rooms')) || {}; });
+    ctx.blockConcurrencyWhile(async () => {
+      this.rooms = (await ctx.storage.get('rooms')) || {};
+      this.bridged = (await ctx.storage.get('bridged')) || {};
+      this.hot = (await ctx.storage.get('hot')) || { day: '', items: [] };
+    });
   }
   view(except) {
     const rooms = Object.values(this.rooms);
-    return { type: 'lobby', rooms, online: this.ctx.getWebSockets().filter(ws => ws !== except).length + rooms.reduce((a, r) => a + r.n, 0) };
+    return {
+      type: 'lobby', rooms, hot: this.hot.items, bridged: Object.values(this.bridged).sort((a, b) => b.score - a.score).slice(0, 6),
+      online: this.ctx.getWebSockets().filter(ws => ws !== except).length + rooms.reduce((a, r) => a + r.n, 0),
+    };
+  }
+  // once a day: turn the day's news into one neutral question per theme. A failure just means no hot topics for now.
+  async refreshHot() {
+    const day = new Date().toISOString().slice(0, 10);
+    if (this.hot.day === day || Date.now() - (this.hotTried || 0) < 3600e3) return;
+    this.hotTried = Date.now();
+    try {
+      const res = await fetch(this.env.NEWS_URL || NEWS_URL, { headers: { 'user-agent': 'HarmonyVoice/0.1 (daily discussion topics)' } }); // NEWS_URL: local tests only
+      const html = (await res.json()).parse.text;
+      const news = String(html['*'] || html).replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/&[#\w]+;/g, ' ').replace(/\s+/g, ' ').slice(0, 7000);
+      const out = await gemini(this.env, hotPrompt(news), false);
+      const items = (Array.isArray(out.items) ? out.items : []).filter(x => THEMES[x.theme] && x.q).slice(0, 6).map(x => ({ theme: x.theme, q: str(x.q, 80), why: str(x.why, 140) }));
+      if (!items.length) return;
+      this.hot = { day, items };
+      await this.ctx.storage.put('hot', this.hot);
+      this.tell();
+    } catch {}
   }
   tell(except) {
     const data = JSON.stringify(this.view(except));
@@ -404,6 +484,7 @@ export class Lobby extends DurableObject {
       const [client, server] = Object.values(new WebSocketPair());
       this.ctx.acceptWebSocket(server);
       this.tell();
+      this.ctx.waitUntil(this.refreshHot());
       return new Response(null, { status: 101, webSocket: client });
     }
     const b = await request.json();
@@ -413,6 +494,16 @@ export class Lobby extends DurableObject {
       for (const [id, r] of Object.entries(this.rooms)) if (r.at < old) delete this.rooms[id];
       if (b.n > 0) this.rooms[b.id] = { ...b, at: Date.now() }; else delete this.rooms[b.id];
       await this.ctx.storage.put('rooms', this.rooms);
+      this.tell();
+      return json({ ok: true });
+    }
+    if (url.pathname === '/bridge') {
+      // a room reports that both speakers understood or learned from each other on this topic
+      const old = this.bridged[b.topic] || { topic: b.topic, theme: b.theme, score: 0 };
+      this.bridged[b.topic] = { ...old, score: old.score + b.score, at: Date.now() };
+      const keep = Object.values(this.bridged).sort((x, y) => y.at - x.at).slice(0, 40);
+      this.bridged = Object.fromEntries(keep.map(x => [x.topic, x]));
+      await this.ctx.storage.put('bridged', this.bridged);
       this.tell();
       return json({ ok: true });
     }
@@ -432,7 +523,8 @@ export class Lobby extends DurableObject {
 const cleanProfile = p => ({
   ...cleanCard(p), lang: LANGS[p?.lang] ? p.lang : 'en', gesture: GESTURES.includes(p?.gesture) ? p.gesture : 'wave',
   unlocked: arr(p?.unlocked).map(x => code(x)).filter(Boolean).slice(0, 60),
-  stats: { said: +p?.stats?.said || 0, heard: +p?.stats?.heard || 0, trees: +p?.stats?.trees || 0, met: arr(p?.stats?.met).map(x => code(x, 8)).filter(Boolean).slice(0, 40), heardFrom: Object.fromEntries(Object.entries(p?.stats?.heardFrom || {}).filter(([k]) => code(k, 8)).slice(0, 40).map(([k, v]) => [k, +v || 0])) },
+  likes: arr(p?.likes).filter(k => THEMES[k]).slice(0, 12),
+  stats: { bridges: +p?.stats?.bridges || 0, hearts: +p?.stats?.hearts || 0, themes: Object.fromEntries(Object.entries(p?.stats?.themes || {}).filter(([k]) => THEMES[k]).map(([k, v]) => [k, +v || 0])), said: +p?.stats?.said || 0, heard: +p?.stats?.heard || 0, trees: +p?.stats?.trees || 0, met: arr(p?.stats?.met).map(x => code(x, 8)).filter(Boolean).slice(0, 40), heardFrom: Object.fromEntries(Object.entries(p?.stats?.heardFrom || {}).filter(([k]) => code(k, 8)).slice(0, 40).map(([k, v]) => [k, +v || 0])) },
 });
 export class User extends DurableObject {
   async fetch(request) {
